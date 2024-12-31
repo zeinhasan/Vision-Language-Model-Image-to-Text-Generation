@@ -1,5 +1,5 @@
 Flask==2.3.3
 Pillow==10.0.0
-moondream==0.1.7
+moondream
 requests==2.31.0
 Werkzeug==2.3.7
