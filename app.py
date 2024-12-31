@@ -1,4 +1,6 @@
-from fastapi import FastAPI, UploadFile, Form, HTTPException
+from fastapi import FastAPI, UploadFile, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import moondream as md
 import os
@@ -6,18 +8,14 @@ import requests
 import gzip
 import shutil
 import uvicorn
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-
-
 
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (or specify a list of origins)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Define constants
@@ -26,9 +24,6 @@ COMPRESSED_MODEL_URL = "https://huggingface.co/vikhyatk/moondream2/resolve/9ddda
 COMPRESSED_MODEL_PATH = "moondream-2b-int8.mf.gz"
 
 def download_and_extract_model(compressed_model_path: str, model_path: str, model_url: str):
-    """
-    Download and extract the model file if it does not exist.
-    """
     if not os.path.exists(model_path):
         if not os.path.exists(compressed_model_path):
             print(f"Model not found. Downloading from {model_url}...")
@@ -41,7 +36,6 @@ def download_and_extract_model(compressed_model_path: str, model_path: str, mode
             else:
                 raise RuntimeError(f"Failed to download model. HTTP Status: {response.status_code}")
         
-        # Extract the model
         print(f"Extracting model from {compressed_model_path}...")
         with gzip.open(compressed_model_path, 'rb') as compressed_file:
             with open(model_path, 'wb') as model_file:
@@ -55,37 +49,54 @@ download_and_extract_model(COMPRESSED_MODEL_PATH, MODEL_PATH, COMPRESSED_MODEL_U
 model = md.vl(model=MODEL_PATH)
 
 @app.post("/caption/")
-async def generate_caption(file: UploadFile):
+async def generate_caption(request: Request, file: UploadFile):
     """
-    Generate a caption for the uploaded image.
+    Generate a caption for the uploaded image with redirect handling.
     """
     try:
-        # Load and encode the image
-        image = Image.open(file.file)
+        # Store the file in memory
+        contents = await file.read()
+        # Reset file pointer for potential reuse
+        await file.seek(0)
+        
+        # Check if this is a redirect
+        if request.headers.get("X-Forwarded-Host") or request.headers.get("X-Forwarded-Proto"):
+            # Handle the redirect by processing the file directly
+            image = Image.open(contents)
+        else:
+            # Normal flow
+            image = Image.open(file.file)
+            
         encoded_image = model.encode_image(image)
-
-        # Generate a caption
         caption = model.caption(encoded_image)["caption"]
         return {"caption": caption}
     except Exception as e:
-        return {"error": str(e)}
-
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/query/")
-async def ask_question(file: UploadFile, question: str = Form(...)):
+async def ask_question(request: Request, file: UploadFile, question: str = Form(...)):
     """
-    Answer a question based on the uploaded image.
+    Answer a question based on the uploaded image with redirect handling.
     """
     try:
-        # Load and encode the image
-        image = Image.open(file.file)
+        # Store the file in memory
+        contents = await file.read()
+        # Reset file pointer for potential reuse
+        await file.seek(0)
+        
+        # Check if this is a redirect
+        if request.headers.get("X-Forwarded-Host") or request.headers.get("X-Forwarded-Proto"):
+            # Handle the redirect by processing the file directly
+            image = Image.open(contents)
+        else:
+            # Normal flow
+            image = Image.open(file.file)
+            
         encoded_image = model.encode_image(image)
-
-        # Answer the question
         answer = model.query(encoded_image, question)["answer"]
         return JSONResponse(content={"question": question, "answer": answer})
     except Exception as e:
-        return HTTPException(status_code=500, detail=f"Error answering question: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error answering question: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
