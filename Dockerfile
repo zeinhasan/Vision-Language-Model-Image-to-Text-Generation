@@ -1,17 +1,30 @@
 # Use an official Python runtime as a parent image
-FROM python:3.12.6
+FROM python:3.9-slim
 
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Copy the current directory contents into the container
-ADD . /app
+# Copy requirements first for better cache
+COPY requirements.txt .
 
-# Install dependencies
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose the port FastAPI runs on
-EXPOSE 8000
+# Copy the rest of the application
+COPY . .
 
-# Command to run the FastAPI app
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Make port 5000 available
+EXPOSE 5000
+
+# Set environment variables
+ENV FLASK_APP=app.py
+ENV FLASK_ENV=production
+
+# Run gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]

@@ -1,6 +1,6 @@
-fastapi
-uvicorn
-pillow
-moondream
-requests
-python-multipart
+flask==3.0.0
+Pillow==10.1.0
+requests==2.31.0
+moondream==0.1.8
+werkzeug==3.0.1
+gunicorn==21.2.0

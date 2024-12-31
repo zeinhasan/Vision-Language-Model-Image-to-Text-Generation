@@ -1,22 +1,14 @@
-from fastapi import FastAPI, UploadFile, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.middleware.cors import CORSMiddleware
+# app.py
+from flask import Flask, request, jsonify
 from PIL import Image
 import moondream as md
 import os
 import requests
 import gzip
 import shutil
-import uvicorn
+from werkzeug.utils import secure_filename
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = Flask(__name__)
 
 # Define constants
 MODEL_PATH = "moondream-2b-int8.bin"
@@ -24,6 +16,9 @@ COMPRESSED_MODEL_URL = "https://huggingface.co/vikhyatk/moondream2/resolve/9ddda
 COMPRESSED_MODEL_PATH = "moondream-2b-int8.mf.gz"
 
 def download_and_extract_model(compressed_model_path: str, model_path: str, model_url: str):
+    """
+    Download and extract the model file if it does not exist.
+    """
     if not os.path.exists(model_path):
         if not os.path.exists(compressed_model_path):
             print(f"Model not found. Downloading from {model_url}...")
@@ -48,55 +43,60 @@ download_and_extract_model(COMPRESSED_MODEL_PATH, MODEL_PATH, COMPRESSED_MODEL_U
 # Load the model
 model = md.vl(model=MODEL_PATH)
 
-@app.post("/caption/")
-async def generate_caption(request: Request, file: UploadFile):
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
+@app.route('/caption/', methods=['POST'])
+def generate_caption():
     """
-    Generate a caption for the uploaded image with redirect handling.
+    Generate a caption for the uploaded image.
     """
     try:
-        # Store the file in memory
-        contents = await file.read()
-        # Reset file pointer for potential reuse
-        await file.seek(0)
-        
-        # Check if this is a redirect
-        if request.headers.get("X-Forwarded-Host") or request.headers.get("X-Forwarded-Proto"):
-            # Handle the redirect by processing the file directly
-            image = Image.open(contents)
-        else:
-            # Normal flow
-            image = Image.open(file.file)
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
             
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        # Read and process the image
+        image = Image.open(file.stream)
         encoded_image = model.encode_image(image)
         caption = model.caption(encoded_image)["caption"]
-        return {"caption": caption}
+        
+        return jsonify({'caption': caption})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return jsonify({'error': str(e)}), 500
 
-@app.post("/query/")
-async def ask_question(request: Request, file: UploadFile, question: str = Form(...)):
+@app.route('/query/', methods=['POST'])
+def ask_question():
     """
-    Answer a question based on the uploaded image with redirect handling.
+    Answer a question based on the uploaded image.
     """
     try:
-        # Store the file in memory
-        contents = await file.read()
-        # Reset file pointer for potential reuse
-        await file.seek(0)
-        
-        # Check if this is a redirect
-        if request.headers.get("X-Forwarded-Host") or request.headers.get("X-Forwarded-Proto"):
-            # Handle the redirect by processing the file directly
-            image = Image.open(contents)
-        else:
-            # Normal flow
-            image = Image.open(file.file)
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
             
+        file = request.files['file']
+        question = request.form.get('question')
+        
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        if not question:
+            return jsonify({'error': 'No question provided'}), 400
+
+        # Read and process the image
+        image = Image.open(file.stream)
         encoded_image = model.encode_image(image)
         answer = model.query(encoded_image, question)["answer"]
-        return JSONResponse(content={"question": question, "answer": answer})
+        
+        return jsonify({'question': question, 'answer': answer})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error answering question: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)
