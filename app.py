@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 from transformers import AutoModelForCausalLM, AutoProcessor
 from PIL import Image
 import torch
-import requests
 from io import BytesIO
 
 app = Flask(__name__)
@@ -38,15 +37,17 @@ def run_example(task_prompt, text_input, image):
     parsed_answer = processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
     return parsed_answer
 
-@app.route('/describe', methods=['POST'])
-def describe_image():
-    if 'image_url' not in request.json:
-        return jsonify({"error": "Missing 'image_url' in request"}), 400
+@app.route('/upload', methods=['POST'])
+def upload_image():
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
 
-    image_url = request.json['image_url']
+    file = request.files['image']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
     try:
-        response = requests.get(image_url)
-        image = Image.open(BytesIO(response.content))
+        image = Image.open(BytesIO(file.read()))
         task_prompt = "<DESCRIPTION>"
         text_input = "Describe this image in great detail."
         answer = run_example(task_prompt, text_input, image)
