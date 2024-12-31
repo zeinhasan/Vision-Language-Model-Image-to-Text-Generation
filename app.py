@@ -1,52 +1,58 @@
-# app.py
 from flask import Flask, request, jsonify
-import moondream as md
+from transformers import AutoModelForCausalLM, AutoProcessor
 from PIL import Image
-import io
-import os
+import torch
+import requests
+from io import BytesIO
 
 app = Flask(__name__)
 
-# Initialize model with the local path
-MODEL_PATH = "model/moondream-2b-int8.bin"
+# Setup device and models
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-@app.before_first_request
-def load_model():
-    global model
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Model file not found at {MODEL_PATH}")
-    model = md.vl(model_path=MODEL_PATH)
+model = AutoModelForCausalLM.from_pretrained(
+    "gokaygokay/Florence-2-SD3-Captioner", 
+    trust_remote_code=True,
+    use_auth_token="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"
+).to(device).eval()
 
-@app.route('/caption', methods=['POST'])
-def generate_caption():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
-    
-    image_file = request.files['image']
-    image = Image.open(io.BytesIO(image_file.read()))
-    
+processor = AutoProcessor.from_pretrained(
+    "gokaygokay/Florence-2-SD3-Captioner", 
+    trust_remote_code=True,
+    use_auth_token="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"
+)
+
+def run_example(task_prompt, text_input, image):
+    prompt = task_prompt + text_input
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+
+    inputs = processor(text=prompt, images=image, return_tensors="pt").to(device)
+    generated_ids = model.generate(
+        input_ids=inputs["input_ids"],
+        pixel_values=inputs["pixel_values"],
+        max_new_tokens=1024,
+        num_beams=3
+    )
+    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
+    parsed_answer = processor.post_process_generation(generated_text, task=task_prompt, image_size=(image.width, image.height))
+    return parsed_answer
+
+@app.route('/describe', methods=['POST'])
+def describe_image():
+    if 'image_url' not in request.json:
+        return jsonify({"error": "Missing 'image_url' in request"}), 400
+
+    image_url = request.json['image_url']
     try:
-        caption = model.caption(image)["caption"]
-        return jsonify({'caption': caption})
+        response = requests.get(image_url)
+        image = Image.open(BytesIO(response.content))
+        task_prompt = "<DESCRIPTION>"
+        text_input = "Describe this image in great detail."
+        answer = run_example(task_prompt, text_input, image)
+        return jsonify({"description": answer.get('<DESCRIPTION>', 'No description available')})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/query', methods=['POST'])
-def query_image():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
-    if 'question' not in request.form:
-        return jsonify({'error': 'No question provided'}), 400
-    
-    image_file = request.files['image']
-    question = request.form['question']
-    image = Image.open(io.BytesIO(image_file.read()))
-    
-    try:
-        answer = model.query(image, question)["answer"]
-        return jsonify({'answer': answer})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

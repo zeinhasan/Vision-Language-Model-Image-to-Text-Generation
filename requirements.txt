@@ -1,5 +1,5 @@
-Flask
+flask
+torch
+transformers
 Pillow
-moondream
 requests
-Werkzeug
